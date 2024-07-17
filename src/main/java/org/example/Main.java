@@ -10,13 +10,31 @@ import java.util.zip.*;
 public class Main {
     public static void main(String[] args) {
 
-        String zipFilePath = "C:\\SZYMON\\berserk_demo\\Berserk v03 (2004).epub";
-        String extractDir = "C:\\SZYMON\\berserk_extract";
-        String outputZipFilePath = "C:\\SZYMON\\berserk_output\\Berserk v03 (2004).epub";
+        String inputDir = "C:\\SZYMON\\berserk_start";
+        String mainExtractDir = "C:\\SZYMON\\berserk_extract";
+        List<Path> pathList = new ArrayList<>();
+
+        try {
+            Files.createDirectories(Paths.get(mainExtractDir));
+            Files.walk(Paths.get(inputDir))
+                    .filter(path -> Files.isRegularFile(path) && path.toString().endsWith(".epub"))
+                    .forEach(epubFilePath -> pathList.add(epubFilePath));
+
+            pathList.forEach(epubFilePath -> processEPUB(epubFilePath, mainExtractDir));
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static void processEPUB(Path epubFilePath, String mainExtractDir) {
+        String fileNameWithoutExt = epubFilePath.getFileName().toString().replaceFirst("[.][^.]+$", "");
+        String extractDir = mainExtractDir + File.separator + fileNameWithoutExt;
+        String outputZipFilePath = epubFilePath.getParent().toString() + File.separator + fileNameWithoutExt + "_processed.epub";
 
         try {
             // Step 1: Unzip the EPUB file
-            unzip(zipFilePath, extractDir);
+            unzip(epubFilePath.toString(), extractDir);
 
             // Step 2: Process html files and gather IDs of removed files
             List<Path> htmlFiles = listhtmlFiles(extractDir);
@@ -30,10 +48,16 @@ public class Main {
                 }
             }
 
-            // Step 3: Update content.opf
-            updateContentOpf(extractDir, removedFileIds);
+            // Step 3: Locate content.opf file
+            Path contentOpfPath = findContentOpf(extractDir);
+            if (contentOpfPath == null) {
+                throw new FileNotFoundException("content.opf not found in the extracted directory.");
+            }
 
-            // Step 4: Repackage the EPUB file
+            // Step 4: Update content.opf
+            updateContentOpf(contentOpfPath, removedFileIds);
+
+            // Step 5: Repackage the EPUB file
             zip(extractDir, outputZipFilePath);
 
             // Step 6: Clean up the extract directory
@@ -127,8 +151,14 @@ public class Main {
         return matcher.replaceAll("");
     }
 
-    private static void updateContentOpf(String extractDir, List<String> removedFileIds) throws IOException {
-        Path contentOpfPath = Paths.get(extractDir, "EPUB", "content.opf");
+    private static Path findContentOpf(String extractDir) throws IOException {
+        return Files.walk(Paths.get(extractDir))
+                .filter(path -> path.getFileName().toString().equals("content.opf"))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static void updateContentOpf(Path contentOpfPath, List<String> removedFileIds) throws IOException {
         String content = new String(Files.readAllBytes(contentOpfPath));
 
         for (String id : removedFileIds) {
