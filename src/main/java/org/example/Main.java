@@ -4,6 +4,7 @@ import java.io.*;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.regex.*;
 import java.util.zip.*;
 
@@ -12,6 +13,7 @@ public class Main {
 
         String inputDir = "C:\\SZYMON\\berserk_start";
         String mainExtractDir = "C:\\SZYMON\\berserk_extract";
+        String outputDir = "C:\\SZYMON\\berserk_output";
         List<Path> pathList = new ArrayList<>();
 
         try {
@@ -20,17 +22,35 @@ public class Main {
                     .filter(path -> Files.isRegularFile(path) && path.toString().endsWith(".epub"))
                     .forEach(epubFilePath -> pathList.add(epubFilePath));
 
-            pathList.forEach(epubFilePath -> processEPUB(epubFilePath, mainExtractDir));
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                CompletionService<Void> completionService = new ExecutorCompletionService<>(executor);
+
+                for (Path epubFilePath : pathList) {
+                    completionService.submit(() -> {
+                        processEPUB(epubFilePath, mainExtractDir, outputDir);
+                        return null;
+                    });
+                }
+
+                // Wait for all tasks to complete
+                for (int i = 0; i < pathList.size(); i++) {
+                    try {
+                        completionService.take().get();
+                    } catch (InterruptedException | ExecutionException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
 
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    private static void processEPUB(Path epubFilePath, String mainExtractDir) {
+    private static void processEPUB(Path epubFilePath, String mainExtractDir, String epubOutputFilePath) {
         String fileNameWithoutExt = epubFilePath.getFileName().toString().replaceFirst("[.][^.]+$", "");
         String extractDir = mainExtractDir + File.separator + fileNameWithoutExt;
-        String outputZipFilePath = epubFilePath.getParent().toString() + File.separator + fileNameWithoutExt + "_processed.epub";
+        String outputZipFilePath = epubOutputFilePath + File.separator + fileNameWithoutExt + "_processed.epub";
 
         try {
             // Step 1: Unzip the EPUB file
@@ -41,7 +61,7 @@ public class Main {
             List<String> removedFileIds = new ArrayList<>();
             for (Path htmlFile : htmlFiles) {
                 if (!containsJpegImages(htmlFile)) {
-                    removedFileIds.add(getFileId(htmlFile));
+                    removedFileIds.add(htmlFile.getFileName().toString());
                     Files.delete(htmlFile);
                 } else {
                     processhtmlFile(htmlFile);
@@ -162,7 +182,8 @@ public class Main {
         String content = new String(Files.readAllBytes(contentOpfPath));
 
         for (String id : removedFileIds) {
-            content = content.replaceAll("<item[^>]+id=\"" + id + "\"[^>]*>", "");
+            //content = content.replaceAll("<item[^>]+id=\"" + id + "\"[^>]*>", "");
+            content = content.replaceAll("<item href=\"" + Pattern.quote(id) + "\" id=\"chapter_\\d+\" media-type=\"text/html\"/>", "");
         }
 
         Files.write(contentOpfPath, content.getBytes(), StandardOpenOption.TRUNCATE_EXISTING);
